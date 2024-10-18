@@ -103,3 +103,33 @@ export async function getGoogleCalendarAvailability(jwt: string) {
             console.log("Error getting Google Calendar events: " + error)
         );
 }
+
+export async function createGoogleCalendarEvent(event: {event_name: string, attendees: string, start_time: string}, jwt: string) {
+    return await fetch(process.env.CREATE_GOOGLE_CALENDAR_EVENT ?? "", {
+        method: "POST",
+        body: JSON.stringify(event),
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: "bearer " + jwt,
+        },
+    })
+        .then((response) => response.json())
+        .catch((error) =>
+            console.log("Error getting Google Calendar events: " + error)
+        );
+}
+
+export async function attachSalesforceTask(task: {email: string, meeting_time: string}, jwt: string) {
+    return await fetch(process.env.CREATE_SALESFORCE_TASK ?? "", {
+        method: "POST",
+        body: JSON.stringify(task),
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: "bearer " + jwt,
+        },
+    })
+        .then((response) => response.json())
+        .catch((error) =>
+            console.log("Error creating Salesforce task: " + error)
+        );
+}

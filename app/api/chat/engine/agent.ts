@@ -1,6 +1,7 @@
 import {FunctionTool, OpenAIAgent, QueryEngineTool} from "llamaindex";
 import {
-    createAsanaTask,
+    attachSalesforceTask,
+    createAsanaTask, createGoogleCalendarEvent,
     createSalesforceContact,
     createSalesforceOpportunity, getAsanaTeam, getGoogleCalendarAvailability,
     sendSlack,
@@ -392,18 +393,158 @@ export async function createAgent(userId: string | (() => string), documentIds?:
     );
 
 
-    const getSdrAvailability = FunctionTool.from(
-        async() => {
-            const response = await getGoogleCalendarAvailability(signJwt(userId));
-            if(response.events){
-                return response.events;
-            }
-            return "Calendar could not be pulled";
+    const getSdrUnavailability = FunctionTool.from(
+      async ({ dummy }: {dummy: string}) => {
+          console.log("Getting non-available times");
+        const response = await getGoogleCalendarAvailability(signJwt(userId));
+        console.log(response);
+        if (response.busy) {
+          return response.busy;
+        }
+        return "Calendar could not be pulled";
+      },
+      {
+        name: "getSdrUnavailability",
+        description:
+          "Use this function when user asks to schedule a meeting with the SDR. This function searches for times where " +
+            "the SDR is unavailable for meetings. Times are provided in UTC format.",
+        parameters: {
+          type: "object",
+          properties: {
+            dummy: {
+              type: "string",
+              description: "dummy",
+            },
+          },
+          required: [],
+        },
+      },
+    );
+
+    const convertUtcDatetimeToPstDatetime = FunctionTool.from(
+        ({datetime}: {datetime: string}) => {
+            console.log("Converting UTC time");
+            console.log(new Date(new Date(datetime).toString()));
+            return JSON.stringify({pstDatetime: new Date(datetime).toString()});
         },
         {
-            name: "getSdrAvailability",
-            description: "Use this function to search for times that are not available for meetings"
-        }
+            name: "convertUtcDatetimeToPstDatetime",
+            description:
+                "Use this function to convert UTC datetimes to PST" +
+                " such as when the getSdrUnavailability tool is used.",
+            parameters: {
+                type: "object",
+                properties: {
+                    datetime: {
+                        type: "string",
+                        description: "datetime in UTC",
+                    },
+                },
+                required: ["datetime"],
+            },
+        },
+    );
+
+    const createThirtyMinuteMeeting = FunctionTool.from(
+        async ({ datetime, email }: {datetime: string, email: string}) => {
+            console.log("Creating Calendar Event");
+            console.log("Time: " + datetime);
+            console.log("attendee email: " + email);
+            const response = await createGoogleCalendarEvent({event_name: "SDR Intro Call", attendees: email, start_time: datetime}, signJwt(userId));
+            console.log(response);
+            if (response.status) {
+                return "Meeting created successfully";
+            }
+            return "Meeting failed to be created";
+        },
+        {
+            name: "createThirtyMinuteMeeting",
+            description:
+                "Use this function to schedule a meeting. Prompt user to check SDR calendar availability if user has " +
+                "not done so. Meetings will be 30 minutes. Make sure to get their email to send the invite.",
+            parameters: {
+                type: "object",
+                properties: {
+                    datetime: {
+                        type: "string",
+                        description: "datetime of meeting in west coast time (pacific time)",
+                    },
+                    email: {
+                        type: "string",
+                        description: "The email of the attendee",
+                    },
+                },
+                required: ["datetime", "email"],
+            },
+        },
+    );
+
+    const sendSlackMeetingNotification = FunctionTool.from(
+        async ({ datetime, email }: {datetime: string, email: string}) => {
+            console.log("Slack Meeting Notification");
+            console.log("Time: " + datetime);
+            console.log("attendee email: " + email);
+            const message = "Meeting scheduled for " + new Date(datetime).toString() + " with " + email;
+            const response = await sendSlack(message, signJwt(userId));
+            console.log(response);
+            if (response.status) {
+                return "Slack meeting notification created successfully";
+            }
+            return "Slack meeting notification failed to be created";
+        },
+        {
+            name: "sendSlackMeetingNotification",
+            description:
+                "Use this function after a meeting has been created with the createThirtyMinuteMeeting tool",
+            parameters: {
+                type: "object",
+                properties: {
+                    datetime: {
+                        type: "string",
+                        description: "datetime of meeting",
+                    },
+                    email: {
+                        type: "string",
+                        description: "The email of the attendee",
+                    },
+                },
+                required: ["datetime", "email"],
+            },
+        },
+    );
+
+    const createSalesforceTask = FunctionTool.from(
+        async ({ datetime, email }: {datetime: string, email: string}) => {
+            console.log("Salesforce Task");
+            console.log("Time: " + datetime);
+            console.log("attendee email: " + email);
+            const response = await attachSalesforceTask({email: email, meeting_time: new Date(datetime).toISOString().split('T')[0]}, signJwt(userId));
+            console.log(response);
+            if (response.status) {
+                return "Salesforce Task created successfully";
+            }
+            return "Salesforce Task failed to be created";
+        },
+        {
+            name: "createSalesforceTask",
+            description:
+                "Use this function after a meeting has been created with the createThirtyMinuteMeeting tool. Create a " +
+                "Salesforce Task when a meeting has been created with the SDR",
+            parameters: {
+                type: "object",
+                properties: {
+                    datetime: {
+                        type: "string",
+                        description: "datetime of meeting",
+                    },
+                    email: {
+                        type: "string",
+                        description: "The email of the attendee",
+                    },
+                },
+                required: ["datetime", "email"],
+            },
+        },
     );
 
     const index = await getDataSource(params);
@@ -427,7 +568,8 @@ export async function createAgent(userId: string | (() => string), documentIds?:
             draftSalesforceContact, confirmAndCreateSalesforceContact,
             draftSalesforceOpportunity, confirmAndCreateSalesforceOpportunity,
             draftAsanaTask, confirmAndCreateAsanaTask, getAsanaMemberId,
-            getSdrAvailability,
+            getSdrUnavailability, convertUtcDatetimeToPstDatetime,
+            createThirtyMinuteMeeting, sendSlackMeetingNotification, createSalesforceTask,
             queryEngineTool]
     });
 }
